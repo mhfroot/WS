@@ -5,6 +5,7 @@ import time
 import subprocess
 import json
 import re
+import inspect
 from pathlib import Path
 import config as app_config
 import numpy as np
@@ -1524,12 +1525,32 @@ class MainWindow(QtWidgets.QMainWindow, QtCore.QObject):
                 self._ble_log_line(f"Bluetooth connection callback failed: {e}")
 
         cfg = BleServerConfig(local_name=str(self.ble_local_name or "win0001"))
-        self.ble_server = BleServer(
-            cfg,
-            on_command=on_command,
-            logger=self._ble_log_line,
-            on_connection_changed=on_connection_changed,
-        )
+        ble_kwargs = {
+            "on_command": on_command,
+            "logger": self._ble_log_line,
+        }
+        try:
+            ble_init_sig = inspect.signature(BleServer.__init__)
+            if "on_connection_changed" in ble_init_sig.parameters:
+                ble_kwargs["on_connection_changed"] = on_connection_changed
+            else:
+                self._ble_log_line(
+                    "[BLE] Using legacy BleServer without connection callback support."
+                )
+        except Exception:
+            ble_kwargs["on_connection_changed"] = on_connection_changed
+
+        try:
+            self.ble_server = BleServer(cfg, **ble_kwargs)
+        except TypeError as e:
+            if "on_connection_changed" not in str(e):
+                raise
+            ble_kwargs.pop("on_connection_changed", None)
+            self._ble_log_line(
+                "[BLE] Falling back to legacy BleServer constructor without "
+                "on_connection_changed."
+            )
+            self.ble_server = BleServer(cfg, **ble_kwargs)
         self.ble_server.start()
         self._set_ble_connection_indicator(
             False,
